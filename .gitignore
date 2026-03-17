@@ -1,0 +1,7 @@
+server/ .env
+.venv
+_pycache
+client/ .env
+local_analyzer/ .env
+server/ .venv
+server.log

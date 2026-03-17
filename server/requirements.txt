@@ -1,0 +1,8 @@
+pymongo
+python-dotenv
+#This is for the file server so establish the connection for file transfer
+##cd file_server 
+##python -m http.server 8000
+
+#This to establish the TCP connection
+##python tcp_server.py
