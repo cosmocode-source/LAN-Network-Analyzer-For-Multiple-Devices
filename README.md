@@ -1,6 +1,6 @@
 # Network Telemetry Analyzer (LAN)
 
-A lightweight client-server based network telemetry system that captures TCP traffic data from clients, sends it to a central server, stores it in MongoDB, and visualizes it using a dashboard.
+A lightweight client-server based network telemetry system that captures TCP traffic data from clients, sends it to a central server, stores it in MongoDB, and visualizes it using a dashboard. Before everything i remind you to make .env files for the local_analyzer and the server folder that will contain the mongoDB credentials. Also all the three folders can we run on independent machines with the contraint of same LAN network.
 
 ---
 
