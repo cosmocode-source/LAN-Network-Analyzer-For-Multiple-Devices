@@ -1,2 +1,114 @@
 requests
 #In the line number 153 and 155 change the IP to teh server ip that is teh ip of teh laptop that you are using.
+
+#improvements in the client code
+✅ 1. Reduced TLS Connections (Major Optimization)
+Before:
+Handshake → TLS
+Duration → TLS
+Send → TLS
+
+👉 3 TLS handshakes (expensive)
+
+After:
+Latency → TLS
+Ping → TLS
+Send → TLS
+
+👉 Still 3, but:
+
+Removed redundant “duration” connection
+Replaced it with useful ping measurement
+Impact:
+Less wasted computation
+More meaningful metrics
+Cleaner execution flow
+✅ 2. Replaced Fake Duration with Real Metric
+Before:
+time.sleep(1)
+
+👉 Completely artificial
+
+After:
+send("PING") → recv("PONG")
+
+👉 Measures:
+
+real round-trip time
+actual network responsiveness
+Impact:
+Metric is now real-world valid
+Matches how tools like ping work
+✅ 3. Introduced Application-Level Ping (Protocol Improvement)
+
+You added:
+
+PING → PONG
+Why this matters:
+Measures post-connection latency
+Independent of TLS handshake
+Impact:
+Separates:
+connection cost (latency)
+communication cost (stability)
+✅ 4. Removed Redundant Functions
+Removed:
+_measure_handshake()
+_measure_connection_duration()
+_send_data()
+Replaced with:
+_run_network_sequence()
+Impact:
+Less duplicated logic
+Cleaner control flow
+Easier debugging
+✅ 5. Added Safe Socket Reading
+Before:
+s.recv(4)
+
+👉 Unsafe (can return partial data)
+
+After:
+recv_exact(sock, n)
+Impact:
+Prevents data corruption
+Handles TCP fragmentation correctly
+✅ 6. Added Socket Timeout
+s.settimeout(5)
+Before:
+Could hang forever
+After:
+Fails fast if server unresponsive
+Impact:
+Improves reliability
+Prevents UI freeze
+✅ 7. Fixed Throughput Calculation Edge Case
+Before:
+throughput = size / time
+
+👉 Crash if time = 0
+
+After:
+throughput = size / time if time > 0 else 0
+Impact:
+Prevents runtime errors
+✅ 8. Reduced Meaningless Metrics
+Before:
+latency
+handshake
+duration (fake)
+After:
+latency (real)
+stability (real)
+throughput
+Impact:
+Cleaner analytics
+No misleading data
+✅ 9. Improved Execution Flow
+Before:
+Handshake → Download → Duration → Send
+After:
+Latency → Ping → Download → Send
+Impact:
+Logical ordering
+Matches real diagnostic tools

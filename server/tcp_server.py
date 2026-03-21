@@ -82,11 +82,28 @@ async def insert_record(record):
 
 # ---------------- CLIENT HANDLER ----------------
 async def handle_client(reader, writer):
-    async with semaphore:  # ✅ LIMIT CONCURRENT CLIENTS
+    async with semaphore:
         addr = writer.get_extra_info('peername')
 
         try:
             logger.info(f"[CONNECTED] {addr}")
+
+            # -------- PING HANDLER --------
+            try:
+                peek = await asyncio.wait_for(reader.read(4), timeout=1)
+
+                if peek == b"PING":
+                    writer.write(b"PONG")
+                    await writer.drain()
+                    writer.close()
+                    await writer.wait_closed()
+                    logger.info(f"[PING] Responded to {addr}")
+                    return
+
+                # If not PING → continue normal flow
+
+            except asyncio.TimeoutError:
+                pass  # No data → continue normal protocol
 
             # ---------- TLS INFO ----------
             ssl_obj = writer.get_extra_info('ssl_object')

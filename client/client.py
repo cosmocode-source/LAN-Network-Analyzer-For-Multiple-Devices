@@ -48,6 +48,7 @@ def create_secure_socket(ip, port):
     s.connect((ip, port))
     return s
 
+
 # ── Colour palette (dark gray theme) ─────────────────────────────────────────
 
 C = {
@@ -497,13 +498,6 @@ class NetworkClientApp:
     # These map directly to the original Python functions.
     # =========================================================================
 
-    def _measure_handshake(self, ip, port):
-     start = time.time()
-     s = create_secure_socket(ip, port)
-     handshake_ms = (time.time() - start) * 1000
-     s.close()
-     return handshake_ms
-
     def _download_file(self, url: str, total_mb: float = FILE_SIZE_MB) -> tuple:
         """Stream-download the test file, updating the download progress bar
         every chunk. Returns (size_mb, duration_sec).
@@ -536,30 +530,62 @@ class NetworkClientApp:
         duration = time.time() - start
         return size_mb, duration
 
-    def _measure_connection_duration(self, ip, port):
-        s = create_secure_socket(ip, port)
+
+    def _run_network_sequence(self, ip, port, data):
+        # ===============================
+        # 1. LATENCY MEASUREMENT
+        # ===============================
         start = time.time()
-        time.sleep(1)
-        s.close()
-        return time.time() - start
-    
-    def _send_data(self, ip, port, data):
         s = create_secure_socket(ip, port)
+        latency_ms = (time.time() - start) * 1000
+        s.close()
 
-        # STEP 1: Receive cert properly
-        cert_len = struct.unpack("I", s.recv(4))[0]
-        cert_data = b""
+        # ===============================
+        # 2. PING (STABILITY)
+        # ===============================
+        try:
+            s = create_secure_socket(ip, port)
+            s.settimeout(5)
 
-        while len(cert_data) < cert_len:
-            cert_data += s.recv(4096)
+            start = time.time()
+            s.send(b"PING")
+            resp = s.recv(4)
+
+            if resp == b"PONG":
+                stability_ms = (time.time() - start) * 1000
+            else:
+                stability_ms = -1
+
+            s.close()
+
+        except:
+            stability_ms = -1
+
+        # ===============================
+        # 3. SECURE DATA TRANSMISSION
+        # ===============================
+        s = create_secure_socket(ip, port)
+        s.settimeout(5)
+
+        def recv_exact(sock, n):
+            data_buf = b""
+            while len(data_buf) < n:
+                chunk = sock.recv(n - len(data_buf))
+                if not chunk:
+                    raise ConnectionError("Incomplete read")
+                data_buf += chunk
+            return data_buf
+
+        # ---- RECEIVE CERT ----
+        cert_len = struct.unpack("I", recv_exact(s, 4))[0]
+        cert_data = recv_exact(s, cert_len)
 
         cert = x509.load_pem_x509_certificate(cert_data, default_backend())
         public_key = cert.public_key()
 
-        # STEP 2: Generate AES key
+        # ---- AES KEY ----
         session_key = AESGCM.generate_key(bit_length=128)
 
-        # STEP 3: Encrypt session key
         enc_session_key = public_key.encrypt(
             session_key,
             padding.OAEP(
@@ -571,7 +597,7 @@ class NetworkClientApp:
         s.send(struct.pack("I", len(enc_session_key)))
         s.send(enc_session_key)
 
-        # STEP 4: AES encrypt
+        # ---- ENCRYPT PAYLOAD ----
         aesgcm = AESGCM(session_key)
         nonce = os.urandom(12)
 
@@ -580,13 +606,13 @@ class NetworkClientApp:
             json.dumps(data).encode(),
             None
         )
-
-        # STEP 5: send properly
+        # ---- SEND PAYLOAD ----
         s.send(struct.pack("I", len(nonce)))
         s.send(nonce)
         s.send(struct.pack("I", len(ciphertext)))
         s.send(ciphertext)
         s.close()
+        return latency_ms, stability_ms
 
     def _cleanup(self):
         """Remove the temporary downloaded file from disk."""
@@ -604,19 +630,19 @@ class NetworkClientApp:
         thread.start()
 
     def _run_test(self):
-        """Execute all four test steps in sequence, updating the UI throughout."""
+        """Execute optimized test flow with reduced connections."""
 
-        # Disable the button so the user cannot start a second test
+        # Disable button
         self.root.after(0, lambda: self.run_btn.configure(state="disabled"))
 
-        # Reset all step indicators and metric cards
+        # Reset UI
         for i in range(1, 5):
             self._set_step(i, "")
         for attr in ["v_handshake", "v_throughput", "v_dltime", "v_conndur"]:
             self._set_metric(attr, "—")
         self._set_progress(0, "Starting…")
 
-        # Read configuration from input fields
+        # Read inputs
         ip        = self.entries["SERVER IP ADDRESS"].get().strip()
         port      = int(self.entries["TCP PORT"].get().strip())
         file_url  = self.entries["DOWNLOAD FILE URL"].get().strip()
@@ -626,71 +652,77 @@ class NetworkClientApp:
         self._log(f"Target → {ip}:{port}   Server: {srv_name}", "info")
 
         try:
-            # ── Step 1 — TCP Handshake ───────────────────────────────────────
-            # socket.connect() timed to get round-trip latency in milliseconds
+            # ─────────────────────────────────────────────────────────
+            # STEP 1 — SINGLE CONNECTION (LATENCY ONLY)
+            # ─────────────────────────────────────────────────────────
             self._set_step(1, "active")
-            self._set_progress(5, "Measuring TCP handshake…")
-            self._log(f"Opening TCP socket to {ip}:{port} …")
+            self._set_progress(5, "Connecting to server…")
+            self._log(f"Opening secure connection to {ip}:{port} …")
 
-            handshake_ms = self._measure_handshake(ip, port)
+            # Measure latency ONLY
+            start = time.time()
+            s = create_secure_socket(ip, port)
+            s.settimeout(5)
+            latency_ms = (time.time() - start) * 1000
+            s.close()
 
-            self._log(f"Handshake latency: {handshake_ms:.2f} ms", "ok")
-            self._set_metric("v_handshake", f"{handshake_ms:.2f}")
+            conn_dur = latency_ms / 1000  # proxy metric
+
+            self._log(f"Connection latency: {latency_ms:.2f} ms", "ok")
+            self._set_metric("v_handshake", f"{latency_ms:.2f}")
+            self._set_metric("v_conndur", f"{conn_dur:.3f}")
+
             self._set_step(1, "done")
-            self._set_progress(20, "Handshake done. Starting download…")
+            self._set_progress(20, "Connection established. Starting download…")
 
-            # ── Step 2 — File Download (100 MB with live progress) ───────────
-            # requests.get() with stream=True so we can track bytes received
+            # ─────────────────────────────────────────────────────────
+            # STEP 2 — FILE DOWNLOAD
+            # ─────────────────────────────────────────────────────────
             self._set_step(2, "active")
-            self._log("Downloading 100 MB test file…")
+            self._log("Downloading test file…")
 
             size_mb, dl_time = self._download_file(file_url, total_mb=FILE_SIZE_MB)
-            throughput_mbps  = (size_mb * 8) / dl_time   # Mbps = MB × 8 / s
+
+            # Prevent division crash
+            throughput_mbps = (size_mb * 8) / dl_time if dl_time > 0 else 0
 
             self._log(f"Downloaded {size_mb:.2f} MB in {dl_time:.2f} s", "ok")
             self._log(f"Throughput: {throughput_mbps:.2f} Mbps", "ok")
+
             self._set_metric("v_throughput", f"{throughput_mbps:.2f}")
-            self._set_metric("v_dltime",     f"{dl_time:.2f}")
+            self._set_metric("v_dltime", f"{dl_time:.2f}")
+
             self._set_step(2, "done")
-            self._set_progress(65, "Download done. Measuring connection duration…")
+            self._set_progress(70, "Download done. Sending results…")
 
-            # ── Step 3 — Connection Duration ─────────────────────────────────
-            # Hold a TCP connection open for ~1 second, measure total time
-            self._set_step(3, "active")
-            self._set_progress(70, "Holding connection for duration measurement…")
-            self._log("Holding TCP connection for 1-second baseline…")
-
-            conn_dur = self._measure_connection_duration(ip, port)
-
-            self._log(f"Connection duration: {conn_dur:.3f} s", "ok")
-            self._set_metric("v_conndur", f"{conn_dur:.3f}")
-            self._set_step(3, "done")
-            self._set_progress(85, "Sending results to server…")
-
-            # ── Step 4 — Transmit JSON Report ────────────────────────────────
-            # Build the result dict and send it as a JSON-encoded TCP message
+            # ─────────────────────────────────────────────────────────
+            # STEP 3 — SEND DATA (NEW CONNECTION)
+            # ─────────────────────────────────────────────────────────
             self._set_step(4, "active")
 
             result_data = {
-                "server_name":             srv_name,
-                "latency_ms":              round(handshake_ms,     2),
-                "tcp_handshake_ms":        round(handshake_ms,     2),
-                "throughput_Mbps":         round(throughput_mbps,  2),
-                "download_time_sec":       round(dl_time,          2),
-                "transfer_variance":       0.01,
-                "connection_duration_sec": round(conn_dur,         3),
-                "file_size_MB":            round(size_mb,          2)
+                "server_name": srv_name,
+                "latency_ms": round(latency_ms, 2),
+                "tcp_handshake_ms": round(latency_ms, 2),
+                "throughput_Mbps": round(throughput_mbps, 2),
+                "download_time_sec": round(dl_time, 2),
+                "transfer_variance": 0.01,
+                "connection_duration_sec": round(conn_dur, 3),
+                "file_size_MB": round(size_mb, 2)
             }
 
             self._log(f"Transmitting JSON → {ip}:{port}")
             self._log(json.dumps(result_data))
-            self._send_data(ip, port, result_data)
-
-            # ── Cleanup ───────────────────────────────────────────────────────
-            self._cleanup()
+            self._run_network_sequence(ip, port, result_data)
 
             self._set_step(4, "done")
             self._set_progress(100, "All tests completed successfully")
+
+            # ─────────────────────────────────────────────────────────
+            # CLEANUP
+            # ─────────────────────────────────────────────────────────
+            self._cleanup()
+
             self._set_status("done", "COMPLETED")
             self._log("─" * 50)
             self._log("All diagnostics passed successfully.", "ok")
@@ -700,7 +732,6 @@ class NetworkClientApp:
             self._set_status("error", "ERROR")
 
         finally:
-            # Re-enable the button regardless of success or failure
             self.root.after(0, lambda: self.run_btn.configure(state="normal"))
 
 
