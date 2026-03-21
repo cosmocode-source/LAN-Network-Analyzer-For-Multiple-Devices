@@ -1,1 +1,2 @@
 requests
+#In the line number 153 and 155 change the IP to teh server ip that is teh ip of teh laptop that you are using.

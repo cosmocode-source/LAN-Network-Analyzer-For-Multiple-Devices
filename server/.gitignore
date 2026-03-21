@@ -1,2 +1,7 @@
 .env
 .venv
+.pem
+.log
+server_cert.pem
+server_key.pem
+__pycache__

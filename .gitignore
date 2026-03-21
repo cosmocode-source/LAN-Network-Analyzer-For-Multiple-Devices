@@ -5,3 +5,11 @@ client/ .env
 local_analyzer/ .env
 server/ .venv
 server.log
+.pem
+san.cnf
+.csr
+.srl
+ca_key.pem
+ca_cert.pem
+ca_cert.srl
+server.csr

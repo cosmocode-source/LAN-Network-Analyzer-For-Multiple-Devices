@@ -6,3 +6,108 @@ python-dotenv
 
 #This to establish the TCP connection
 ##python tcp_server.py
+
+#Certificate Generation for using the OpenSLL also need to regeenrate the certificate every time the ip changes 
+
+STEP 1 — Create CA (DO ONLY ONCE)
+
+openssl genrsa -out ca_key.pem 2048
+openssl req -x509 -new -nodes -key ca_key.pem ^
+-sha256 -days 365 ^
+-out ca_cert.pem ^
+-subj "/CN=MyRootCA"
+
+🔹 STEP 2 — Create Server Private Key
+
+openssl genrsa -out server_key.pem 2048
+
+🔹 STEP 3 — Create CSR (USE YOUR SERVER IP)
+
+openssl req -new -key server_key.pem ^
+-out server.csr ^
+-subj "/CN=put the server ip here"
+
+🔹 STEP 4 — CREATE SAN FILE (MANDATORY)
+Create san.cnf
+
+[req]
+distinguished_name=req
+[san]
+subjectAltName=IP:10.5.17.68
+
+🔹 STEP 5 — SIGN CERTIFICATE
+openssl x509 -req -in server.csr ^
+-CA ca_cert.pem -CAkey ca_key.pem ^
+-CAcreateserial ^
+-out server_cert.pem ^
+-days 365 -sha256 ^
+-extfile san.cnf -extensions san
+
+
+# The modification to the server that optimizes the server code
+✅ Core Fixes (Must-have)
+1. Non-blocking MongoDB writes
+Moved insert_one() to a thread pool
+Prevents blocking the asyncio event loop
+Result: multiple clients handled properly instead of serial slowdown
+2. Connection limiting (Concurrency control)
+Added asyncio.Semaphore(50)
+Caps number of active clients
+Prevents CPU/memory overload under heavy load
+3. Read timeouts
+Wrapped reads with asyncio.wait_for(..., timeout=5)
+Prevents hanging connections
+Fixes resource leaks from idle or malicious clients
+4. Payload size validation
+Added MAX_PAYLOAD_SIZE checks
+Prevents:
+memory exhaustion
+malicious large payload attacks
+5. Safe TCP reading (already correct, reinforced)
+read_exact() ensures full data reception
+Prevents TCP fragmentation issues
+
+⚠️ Stability Improvements
+6. JSON parsing protection
+Wrapped json.loads() in try-catch
+Prevents crashes on corrupted payloads
+7. Graceful error handling
+Separate handling for:
+timeout errors
+general exceptions
+Server doesn’t crash per client failure
+8. Proper connection cleanup
+Ensures:
+writer.close()
+await writer.wait_closed()
+Avoids socket leaks
+
+🚀 Performance Improvements
+9. Parallel DB writes
+With thread pool → DB operations run concurrently
+Major throughput improvement under load
+10. Reduced event loop blocking
+Logging + DB no longer stall async loop significantly
+Improves latency consistency
+
+🔒 Basic Security Hardening
+11. Payload boundary checks
+Validates:
+session key size
+nonce size
+ciphertext size
+12. TLS still enforced properly
+Existing SSL setup retained
+Encryption flow remains correct
+
+📊 Net Effect
+
+Server now scales to multiple clients properly
+No more:
+event loop blocking
+random latency spikes
+hanging connections
+Safer against:
+malformed input
+oversized payloads
+More predictable under load

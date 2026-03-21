@@ -1,0 +1,12 @@
+# Core networking & security
+cryptography==42.0.5
+pyOpenSSL==24.0.0
+
+# HTTP / client testing
+requests==2.31.0
+
+# Optional (if you are using Flask for server/dashboard)
+flask==3.0.2
+
+# Optional (for environment variables)
+python-dotenv==1.0.1

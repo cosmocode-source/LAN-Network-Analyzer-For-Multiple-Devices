@@ -1,14 +1,14 @@
 def device_summary(df):
     summary = df.groupby("device_name").agg(
-        instances=("device_name", "count"),
         avg_latency=("latency_ms", "mean"),
-        avg_handshake=("tcp_handshake_ms", "mean"),
         avg_throughput=("throughput_Mbps", "mean"),
-        avg_download_time=("download_time_sec", "mean"),
-        stability=("transfer_variance", "mean")
+        avg_handshake=("tcp_handshake_ms", "mean"),
+        stability=("connection_duration_sec", "std"),
+        transfer_variance=("throughput_Mbps", "var"),
+        tests=("device_name", "count")
     )
-    summary = summary.round(2)
-    summary = summary.sort_values("avg_throughput", ascending=False)
+
+    summary = summary.fillna(0)
     return summary
 
 

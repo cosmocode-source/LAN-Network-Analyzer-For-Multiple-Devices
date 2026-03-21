@@ -2,6 +2,7 @@
 
 A lightweight client-server based network telemetry system that captures TCP traffic data from clients, sends it to a central server, stores it in MongoDB, and visualizes it using a dashboard. Before everything i remind you to make .env files for the local_analyzer and the server folder that will contain the mongoDB credentials. Also all the three folders can we run on independent machines with the contraint of same LAN network.
 
+The code now uses the OpenSLL to establish a secure connection on the socker and also has multi-client conneciton capabilities. It does not use threading since that restricts the number oof teh client to the no. of core the server had, therefore been modded to the use async function that use non blocking I/O for the handling of the client in a single loop.
 ---
 
 ## 📌 Overview
@@ -19,8 +20,8 @@ The system works in a LAN environment and helps monitor TCP-level activity such 
 ## 🧠 How It Works (Architecture)
 
 ```
-[ CLIENT ]  --->  [ SERVER ]  --->  [ DATABASE ]  --->  [ DASHBOARD ]
- Packet Capture     TCP Socket       MongoDB           Streamlit UI
+[ CLIENT ]  --->  [ SERVER ]  ---> [TLS-SSL] --->  [ DATABASE ]  --->  [ DASHBOARD ]
+ Packet Capture     TCP Socket      OpenSSL          MongoDB           Streamlit UI
 ```
 
 ### Step-by-step flow:
@@ -37,28 +38,204 @@ The system works in a LAN environment and helps monitor TCP-level activity such 
 5. Stores it in MongoDB
 6. Dashboard fetches data from MongoDB
 7. Displays graphs and logs
+## 🔐 OpenSSL Setup (Required for RSA + TLS/SSL)
+
+This project uses **OpenSSL** to implement **RSA-based TLS/SSL secure communication**.
+Follow the steps below to install and configure it before running the project.
+
+---
+
+### 📦 1. Install OpenSSL
+
+#### Windows
+
+1. Download from: https://slproweb.com/products/Win32OpenSSL.html
+
+2. Install **Win64 OpenSSL (Light version is enough)**
+
+3. Add this to your system `PATH`:
+
+   ```
+   C:\Program Files\OpenSSL-Win64\bin
+   ```
+
+4. Verify installation:
+
+   ```bash
+   openssl version
+   ```
+
+---
+
+#### Linux (Ubuntu/Debian)
+
+```bash
+sudo apt update
+sudo apt install openssl libssl-dev
+```
+
+---
+
+#### macOS
+
+```bash
+brew install openssl
+```
+
+---
+
+### 🔑 2. Generate RSA Keys & Certificates
+
+Create a folder named `certs/` and run:
+
+#### Step 1: Create Certificate Authority (CA)
+
+```bash
+openssl genrsa -out ca.key 2048
+
+openssl req -x509 -new -nodes -key ca.key \
+-sha256 -days 365 -out ca.pem
+```
+
+---
+
+#### Step 2: Create Server Certificate (RSA + TLS)
+
+```bash
+openssl genrsa -out server.key 2048
+
+openssl req -new -key server.key -out server.csr
+
+openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key \
+-CAcreateserial -out server.pem -days 365 -sha256
+```
+
+---
+
+#### Step 3 (Optional): Client Certificate for mTLS
+
+```bash
+openssl genrsa -out client.key 2048
+
+openssl req -new -key client.key -out client.csr
+
+openssl x509 -req -in client.csr -CA ca.pem -CAkey ca.key \
+-CAcreateserial -out client.pem -days 365 -sha256
+```
+
+---
+
+### 📁 Expected Certificate Structure
+
+```
+certs/
+├── ca.pem
+├── server.pem
+├── server.key
+├── client.pem      (optional)
+└── client.key      (optional)
+```
+
+---
+
+### ▶️ 3. Run the Project with SSL
+
+Start server:
+
+```bash
+python server.py
+```
+
+Run client:
+
+```bash
+python client.py
+```
+
+---
+
+### ⚠️ Notes
+
+* RSA (2048-bit) is used for secure key exchange
+* TLS handles encryption after handshake
+* Make sure server IP matches certificate (important for TLS)
+* For local testing, self-signed certificates are acceptable
+* Do NOT upload `.key` files in public repositories
 
 ---
 
 ## 📁 Folder Structure
 
-```
-Network-Analyzer/
+## 📁 Full Project Structure (After Generating Certificates)
+
+```id="n8x2qa"
+Network_Analyzer/
 │
 ├── client/
-│   ├── client.py              # Captures and sends packet data
-│
-├── server/
-│   ├── tcp_server.py          # Receives client data
-│   ├── db.py                  # MongoDB connection setup
+│   ├── client.py
+│   ├── requirements.txt
+│   └── ca_cert.pem              # ← COPY this from server (needed for TLS verify)
 │
 ├── local_analyzer/
-│   ├── dashboard.py           # Streamlit dashboard
+│   ├── __pycache__/
+│   ├── .env
+│   ├── .gitignore
+│   ├── analytics.py
+│   ├── dashboard.py
+│   ├── data_fetcher.py
+│   └── report_logic.py
 │
-├── .env                       # Environment variables (Mongo URI)
-├── requirements.txt           # Dependencies
-└── README.md                  # This file
+├── server/
+│   ├── __pycache__/
+│   ├── .venv/
+│   ├── file_server/
+│   ├── .env
+│   ├── .gitignore
+│   ├── config.py
+│   ├── tcp_server.py
+│   ├── server.log
+│   ├── requirements.txt
+│   │
+│   ├── ca_cert.pem              # ← GENERATED (CA certificate)
+│   ├── server_cert.pem          # ← GENERATED (server certificate)
+│   ├── server_key.pem           # ← GENERATED (server private key)
+│   ├── ca_key.pem               # ← GENERATED (keep private, do not share)
+│   └── ca_cert.srl              # ← auto-generated by OpenSSL
+│
+├── .gitignore
+├── LICENSE
+└── README.md
 ```
+
+---
+
+## ⚠️ Required Steps After Generating Certificates
+
+1. Generate all cert files using OpenSSL
+
+2. Place them inside `server/`:
+
+   * `ca_cert.pem`
+   * `server_cert.pem`
+   * `server_key.pem`
+   * `ca_key.pem`
+   * `ca_cert.srl`
+
+3. Copy only:
+
+   * `ca_cert.pem` → into `client/`
+
+---
+
+## 🚨 Important
+
+* Server reads certs directly from its folder
+* Client verifies server using `ca_cert.pem`
+* Do NOT rename files (code depends on exact names)
+* Do NOT move into subfolders (your code uses direct paths)
+
+---
+
 
 ---
 

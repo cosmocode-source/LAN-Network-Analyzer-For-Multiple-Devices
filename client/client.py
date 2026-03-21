@@ -17,16 +17,36 @@ import socket
 import time
 import requests
 import json
+import struct
 import os
 import threading
 import tkinter as tk
+import ssl
 from tkinter import font as tkfont
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
 
+import os
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 DOWNLOAD_FILE   = "temp_download.bin"
 DOWNLOAD_CHUNKS = 8192          # bytes per chunk while streaming the download
 FILE_SIZE_MB    = 100           # expected file size used for progress calculation
+
+def create_secure_socket(ip, port):
+    context = ssl.create_default_context(cafile="ca_cert.pem")
+
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s = context.wrap_socket(sock, server_hostname=ip)
+
+    s.connect((ip, port))
+    return s
 
 # ── Colour palette (dark gray theme) ─────────────────────────────────────────
 
@@ -130,9 +150,9 @@ class NetworkClientApp:
 
         # Four input fields in a 2×2 grid
         fields = [
-            ("SERVER IP ADDRESS", "ip of your server"),
+            ("SERVER IP ADDRESS", "{ip}"),
             ("TCP PORT",          "5000"),
-            ("DOWNLOAD FILE URL", "http://ip of teh file server that you are using/testfile.bin"),
+            ("DOWNLOAD FILE URL", "http://{ip}:8000/testfile.bin"),
             ("SERVER NAME",       "LocalServer"),
         ]
 
@@ -477,16 +497,12 @@ class NetworkClientApp:
     # These map directly to the original Python functions.
     # =========================================================================
 
-    def _measure_handshake(self, ip: str, port: int) -> float:
-        """Open a TCP socket, time the connect() call, close it.
-        Returns latency in milliseconds.
-        """
-        s = socket.socket()
-        start = time.time()
-        s.connect((ip, port))
-        handshake_ms = (time.time() - start) * 1000
-        s.close()
-        return handshake_ms
+    def _measure_handshake(self, ip, port):
+     start = time.time()
+     s = create_secure_socket(ip, port)
+     handshake_ms = (time.time() - start) * 1000
+     s.close()
+     return handshake_ms
 
     def _download_file(self, url: str, total_mb: float = FILE_SIZE_MB) -> tuple:
         """Stream-download the test file, updating the download progress bar
@@ -520,20 +536,56 @@ class NetworkClientApp:
         duration = time.time() - start
         return size_mb, duration
 
-    def _measure_connection_duration(self, ip: str, port: int) -> float:
-        """Connect, hold open for 1 second, close. Returns total duration in seconds."""
-        s = socket.socket()
+    def _measure_connection_duration(self, ip, port):
+        s = create_secure_socket(ip, port)
         start = time.time()
-        s.connect((ip, port))
         time.sleep(1)
         s.close()
         return time.time() - start
+    
+    def _send_data(self, ip, port, data):
+        s = create_secure_socket(ip, port)
 
-    def _send_data(self, ip: str, port: int, data: dict):
-        """Serialise data as JSON and transmit it over a TCP socket."""
-        s = socket.socket()
-        s.connect((ip, port))
-        s.send(json.dumps(data).encode())
+        # STEP 1: Receive cert properly
+        cert_len = struct.unpack("I", s.recv(4))[0]
+        cert_data = b""
+
+        while len(cert_data) < cert_len:
+            cert_data += s.recv(4096)
+
+        cert = x509.load_pem_x509_certificate(cert_data, default_backend())
+        public_key = cert.public_key()
+
+        # STEP 2: Generate AES key
+        session_key = AESGCM.generate_key(bit_length=128)
+
+        # STEP 3: Encrypt session key
+        enc_session_key = public_key.encrypt(
+            session_key,
+            padding.OAEP(
+                mgf=padding.MGF1(hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+        s.send(struct.pack("I", len(enc_session_key)))
+        s.send(enc_session_key)
+
+        # STEP 4: AES encrypt
+        aesgcm = AESGCM(session_key)
+        nonce = os.urandom(12)
+
+        ciphertext = aesgcm.encrypt(
+            nonce,
+            json.dumps(data).encode(),
+            None
+        )
+
+        # STEP 5: send properly
+        s.send(struct.pack("I", len(nonce)))
+        s.send(nonce)
+        s.send(struct.pack("I", len(ciphertext)))
+        s.send(ciphertext)
         s.close()
 
     def _cleanup(self):

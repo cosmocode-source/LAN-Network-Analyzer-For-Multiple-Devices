@@ -17,9 +17,7 @@ def load_data():
     df = pd.DataFrame(data)
 
     if "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-
-    # ✅ OPTIONAL: keep only valid numeric rows
+         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
     numeric_cols = [
         "latency_ms",
         "tcp_handshake_ms",

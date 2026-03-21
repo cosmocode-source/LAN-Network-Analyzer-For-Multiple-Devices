@@ -293,7 +293,7 @@ else:
                                 "fontSize": "12px",
                                 "fontWeight": "600",
                                 "color": COLORS["muted"],
-                                "letterSpacing": "0.05em",
+                                " letterSpacing": "0.05em",
                                 "textTransform": "uppercase",
                                 "borderBottom": f"2px solid {COLORS['border']}",
                                 "whiteSpace": "nowrap",
