@@ -17,9 +17,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-formatter = logging.Formatter(
-    "%(asctime)s [%(levelname)s] %(message)s"
-)
+formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 
 file_handler = logging.FileHandler("server.log")
 file_handler.setFormatter(formatter)
@@ -30,24 +28,16 @@ console_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
-
 # ---------------- DATABASE ----------------
 client = MongoClient(MONGO_URI)
 db = client[DB_NAME]
 collection = db[COLLECTION]
 
-# ✅ IMPROVEMENT: thread pool for non-blocking DB writes
 executor = ThreadPoolExecutor(max_workers=10)
-
-# ✅ IMPROVEMENT: limit concurrent clients (prevents overload)
 semaphore = asyncio.Semaphore(50)
 
-# ✅ IMPROVEMENT: payload size limit (DoS protection)
-MAX_PAYLOAD_SIZE = 10 * 1024 * 1024  # 10MB
-
-# ✅ IMPROVEMENT: timeout for reads (prevents hanging connections)
+MAX_PAYLOAD_SIZE = 10 * 1024 * 1024
 READ_TIMEOUT = 5
-
 
 # ---------------- LOAD KEYS ----------------
 with open("server_key.pem", "rb") as f:
@@ -56,12 +46,8 @@ with open("server_key.pem", "rb") as f:
 with open("server_cert.pem", "rb") as f:
     cert_data = f.read()
 
-
-# ---------------- SAFE ASYNC READ ----------------
+# ---------------- SAFE READ ----------------
 async def read_exact(reader, n):
-    """
-    Read exactly n bytes safely (handles TCP fragmentation).
-    """
     data = b""
     while len(data) < n:
         chunk = await asyncio.wait_for(reader.read(n - len(data)), timeout=READ_TIMEOUT)
@@ -70,15 +56,10 @@ async def read_exact(reader, n):
         data += chunk
     return data
 
-
-# ---------------- ASYNC DB WRITE ----------------
+# ---------------- DB WRITE ----------------
 async def insert_record(record):
-    """
-    Run MongoDB insert in thread pool (non-blocking for asyncio loop).
-    """
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(executor, collection.insert_one, record)
-
 
 # ---------------- CLIENT HANDLER ----------------
 async def handle_client(reader, writer):
@@ -88,7 +69,27 @@ async def handle_client(reader, writer):
         try:
             logger.info(f"[CONNECTED] {addr}")
 
-            # -------- PING HANDLER --------
+            # ===== CLIENT CERT EXTRACTION =====
+            ssl_obj = writer.get_extra_info('ssl_object')
+            if ssl_obj:
+                cert = ssl_obj.getpeercert()
+                if not cert:
+                    raise Exception("Client certificate missing")
+                subject = dict(x[0] for x in cert['subject'])
+                issuer = dict(x[0] for x in cert['issuer'])
+                client_cn = subject.get('commonName', 'UNKNOWN')
+                issuer_cn = issuer.get('commonName', 'UNKNOWN')
+                logger.info(f"[mTLS SUCCESS] Client Authenticated → CN={client_cn}, Issuer={issuer_cn}")
+            client_identity = "UNKNOWN"
+
+            if ssl_obj:
+                cert = ssl_obj.getpeercert()
+                if cert:
+                    subject = dict(x[0] for x in cert['subject'])
+                    client_identity = subject.get('commonName', 'UNKNOWN')
+                    logger.info(f"[CLIENT CERT] CN={client_identity}")
+
+            # -------- PING --------
             try:
                 peek = await asyncio.wait_for(reader.read(4), timeout=1)
 
@@ -97,28 +98,24 @@ async def handle_client(reader, writer):
                     await writer.drain()
                     writer.close()
                     await writer.wait_closed()
-                    logger.info(f"[PING] Responded to {addr}")
+                    logger.info(f"[PING] {addr}")
                     return
 
-                # If not PING → continue normal flow
-
             except asyncio.TimeoutError:
-                pass  # No data → continue normal protocol
+                pass
 
-            # ---------- TLS INFO ----------
-            ssl_obj = writer.get_extra_info('ssl_object')
+            # -------- TLS INFO --------
             if ssl_obj:
-                logger.info(f"[TLS] Version={ssl_obj.version()} Cipher={ssl_obj.cipher()}")
+                logger.info(f"[TLS] {ssl_obj.version()} {ssl_obj.cipher()}")
 
-            # ---------- STEP 1: SEND CERT ----------
+            # -------- SEND CERT --------
             writer.write(struct.pack("I", len(cert_data)))
             writer.write(cert_data)
             await writer.drain()
 
-            # ---------- STEP 2: RECEIVE SESSION KEY ----------
+            # -------- RECEIVE SESSION KEY --------
             key_len = struct.unpack("I", await read_exact(reader, 4))[0]
 
-            # ✅ VALIDATE SIZE
             if key_len > MAX_PAYLOAD_SIZE:
                 raise ValueError("Session key too large")
 
@@ -133,9 +130,7 @@ async def handle_client(reader, writer):
                 )
             )
 
-            logger.info("Session key decrypted")
-
-            # ---------- STEP 3: RECEIVE ENCRYPTED DATA ----------
+            # -------- RECEIVE DATA --------
             nonce_len = struct.unpack("I", await read_exact(reader, 4))[0]
 
             if nonce_len > 1024:
@@ -145,28 +140,28 @@ async def handle_client(reader, writer):
 
             cipher_len = struct.unpack("I", await read_exact(reader, 4))[0]
 
-            # ✅ VALIDATE PAYLOAD SIZE
             if cipher_len > MAX_PAYLOAD_SIZE:
                 raise ValueError("Payload too large")
 
             ciphertext = await read_exact(reader, cipher_len)
 
-            # ---------- STEP 4: DECRYPT ----------
+            # -------- DECRYPT --------
             aesgcm = AESGCM(session_key)
             data = aesgcm.decrypt(nonce, ciphertext, None)
 
-            # ---------- SAFE JSON PARSE ----------
             try:
                 payload = json.loads(data.decode())
-            except Exception:
-                raise ValueError("Invalid JSON payload")
+            except:
+                raise ValueError("Invalid JSON")
 
-            # ---------- DEVICE IDENTIFICATION ----------
+            # -------- DEVICE IDENTIFICATION --------
             device_ip = addr[0]
             client_name = payload.get("server_name", "Unknown")
-            device_name = f"{client_name}_{device_ip}"
 
-            # ---------- CREATE RECORD ----------
+            # USE CERT NAME (fallback to payload)
+            device_name = f"{client_identity}_{device_ip}"
+
+            # -------- RECORD --------
             record = {
                 "device_name": device_name,
                 "device_ip": device_ip,
@@ -182,13 +177,9 @@ async def handle_client(reader, writer):
                 "timestamp": datetime.now()
             }
 
-            # ✅ NON-BLOCKING INSERT
             await insert_record(record)
 
-            logger.info(f"Data stored for {device_name}")
-
-        except asyncio.TimeoutError:
-            logger.error(f"[TIMEOUT] {addr}")
+            logger.info(f"[STORED] {device_name}")
 
         except Exception as e:
             logger.error(f"[ERROR] {addr} → {e}")
@@ -196,13 +187,16 @@ async def handle_client(reader, writer):
         finally:
             writer.close()
             await writer.wait_closed()
-            logger.info(f"Connection closed: {addr}")
 
-
-# ---------------- MAIN SERVER ----------------
+# ---------------- SERVER ----------------
 async def main():
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+
     ssl_context.load_cert_chain("server_cert.pem", "server_key.pem")
+
+    # 🔥🔥🔥 CRITICAL ADDITION (mTLS) 🔥🔥🔥
+    ssl_context.load_verify_locations("ca_cert.pem")
+    ssl_context.verify_mode = ssl.CERT_REQUIRED
 
     server = await asyncio.start_server(
         handle_client,
@@ -216,7 +210,5 @@ async def main():
     async with server:
         await server.serve_forever()
 
-
-# ---------------- ENTRY POINT ----------------
 if __name__ == "__main__":
     asyncio.run(main())

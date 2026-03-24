@@ -38,16 +38,24 @@ FILE_SIZE_MB    = 100           # expected file size used for progress calculati
 
 def create_secure_socket(ip, port):
     context = ssl.create_default_context(cafile="ca_cert.pem")
-
     context.check_hostname = True
     context.verify_mode = ssl.CERT_REQUIRED
-
+    context.load_cert_chain(
+        certfile="client_cert.pem",
+        keyfile="client_key.pem"
+    )
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s = context.wrap_socket(sock, server_hostname=ip)
-
     s.connect((ip, port))
+    cert = s.getpeercert()
+    if not cert:
+        raise Exception("Server certificate not received")
+    subject = dict(x[0] for x in cert['subject'])
+    issuer = dict(x[0] for x in cert['issuer'])
+    server_cn = subject.get('commonName', 'UNKNOWN')
+    issuer_cn = issuer.get('commonName', 'UNKNOWN')
+    print(f"[mTLS SUCCESS] Server Authenticated → CN={server_cn}, Issuer={issuer_cn}")
     return s
-
 
 # ── Colour palette (dark gray theme) ─────────────────────────────────────────
 
