@@ -2,7 +2,9 @@
 
 A lightweight client-server based network telemetry system that captures TCP traffic data from clients, sends it to a central server, stores it in MongoDB, and visualizes it using a dashboard. Before everything i remind you to make .env files for the local_analyzer and the server folder that will contain the mongoDB credentials. Also all the three folders can we run on independent machines with the contraint of same LAN network.
 
-The code now uses the OpenSLL to establish a secure connection on the socker and also has multi-client conneciton capabilities. It does not use threading since that restricts the number oof teh client to the no. of core the server had, therefore been modded to the use async function that use non blocking I/O for the handling of the client in a single loop.
+The code now uses the OpenSLL to establish a secure connection on the socker and also has multi-client conneciton capabilities. It does not use threading since that restricts the number of the client to the no. of core the server had, therefore been modded to the use async function that use non blocking I/O for the handling of the client in a single loop.
+The code now has a certificate generator file so be sure to download openSSL before run that file. Just need to input the server ip and the certs are generated for the client , server and even the CA certs are also signed.
+
 ---
 
 ## 📌 Overview
