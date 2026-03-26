@@ -23,13 +23,16 @@ import threading
 import tkinter as tk
 import ssl
 from tkinter import font as tkfont
+import os
+from dotenv import load_dotenv
+load_dotenv()
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 
-import os
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 DOWNLOAD_FILE   = "temp_download.bin"
@@ -158,13 +161,18 @@ class NetworkClientApp:
         ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
 
         # Four input fields in a 2×2 grid
-        fields = [
-            ("SERVER IP ADDRESS", "{ip}"),
-            ("TCP PORT",          "5000"),
-            ("DOWNLOAD FILE URL", "http://{ip}:8000/testfile.bin"),
-            ("SERVER NAME",       "LocalServer"),
-        ]
+        ip = os.getenv("SERVER_IP", "")
+        port = os.getenv("SERVER_PORT", "5000")
+        file_url = os.getenv("FILE_URL", f"http://{ip}:8000/testfile.bin")
+        server_name = os.getenv("SERVER_NAME", "LocalServer")
 
+        fields = [
+            ("SERVER IP ADDRESS", ip),
+            ("TCP PORT",          port),
+            ("DOWNLOAD FILE URL", file_url),
+            ("SERVER NAME",       server_name),
+        
+        ]
         self.entries = {}
         for idx, (label_text, default) in enumerate(fields):
             row = (idx // 2) + 1
@@ -651,11 +659,10 @@ class NetworkClientApp:
         self._set_progress(0, "Starting…")
 
         # Read inputs
-        ip        = self.entries["SERVER IP ADDRESS"].get().strip()
-        port      = int(self.entries["TCP PORT"].get().strip())
-        file_url  = self.entries["DOWNLOAD FILE URL"].get().strip()
-        srv_name  = self.entries["SERVER NAME"].get().strip()
-
+        ip = self.entries["SERVER IP ADDRESS"].get().strip() or os.getenv("SERVER_IP")
+        port = int(self.entries["TCP PORT"].get().strip() or os.getenv("SERVER_PORT"))
+        file_url = self.entries["DOWNLOAD FILE URL"].get().strip() or os.getenv("FILE_URL")
+        srv_name = self.entries["SERVER NAME"].get().strip() or os.getenv("SERVER_NAME")
         self._set_status("running", "RUNNING")
         self._log(f"Target → {ip}:{port}   Server: {srv_name}", "info")
 
